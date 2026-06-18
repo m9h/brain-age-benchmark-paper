@@ -17,14 +17,13 @@ from sklearn.model_selection import KFold, GridSearchCV, cross_validate
 from sklearn.metrics import make_scorer, r2_score, mean_absolute_error
 import coffeine
 
-from deep_learning_utils import (
-    create_dataset_target_model, get_fif_paths, BraindecodeKFold,
-    make_braindecode_scorer)
+# deep_learning_utils pulls in torch/braindecode, which the classical benchmarks
+# don't need; import it lazily so a torch-free env can still run them.
 
 
-DATASETS = ['chbp', 'lemon', 'tuab', 'camcan']
+DATASETS = ['chbp', 'lemon', 'tuab', 'tueg', 'camcan', 'hbn']
 BENCHMARKS = ['dummy', 'filterbank-riemann', 'filterbank-source',
-              'handcrafted', 'shallow', 'deep']
+              'handcrafted', 'fooof-sparse-gl', 'shallow', 'deep']
 
 parser = argparse.ArgumentParser(description='Compute features.')
 parser.add_argument(
@@ -60,7 +59,9 @@ print(f"Datasets: {', '.join(datasets)}")
 config_map = {'chbp': "config_chbp_eeg",
               'lemon': "config_lemon_eeg",
               'tuab': "config_tuab_eeg",
-              'camcan': "config_camcan_meg"}
+              'tueg': "config_tueg_eeg",
+              'camcan': "config_camcan_meg",
+              'hbn': "config_hbn_eeg"}
 
 bench_config = {  # put other benchmark related config here
     'filterbank-riemann': {  # it can go in a seprate file later
@@ -86,7 +87,8 @@ bench_config = {  # put other benchmark related config here
             "beta_high": (35.0, 49)
         },
         'feature_map': 'source_power'},
-    'handcrafted': {'feature_map': 'handcrafted'}
+    'handcrafted': {'feature_map': 'handcrafted'},
+    'fooof-sparse-gl': {'feature_map': 'fooof'}
 }
 
 # %% get age
@@ -212,12 +214,25 @@ def load_benchmark_data(dataset, benchmark, condition=None):
             FunctionTransformer(aggregate_features, kw_args={'func': 'mean'}),
             rf_reg
         )
+    elif benchmark == 'fooof-sparse-gl':
+        import neoba
+        features = h5io.read_hdf5(
+            deriv_root / f'features_fooof_{condition_}.h5')
+        subs = list(df_subjects.index)
+        X = np.array(
+            [np.asarray(features[sub]['feats'], dtype=float) for sub in subs])
+        groups = np.asarray(features[subs[0]]['groups'])
+        y = df_subjects.age.values
+        model = neoba.make_neoba_model(groups, cv=5)
+
     elif benchmark == 'dummy':
         y = df_subjects.age.values
         X = np.zeros(shape=(len(y), 1))
         model = DummyRegressor(strategy="mean")
 
     elif benchmark in ['shallow', 'deep']:
+        from deep_learning_utils import (
+            create_dataset_target_model, get_fif_paths)
         fif_fnames = get_fif_paths(dataset, cfg)
         # Only keep loaded subjects
         df_subjects = df_subjects.merge(fif_fnames, on='participant_id')
@@ -239,7 +254,8 @@ def load_benchmark_data(dataset, benchmark, condition=None):
             'camcan': 369.3,  # fT
             'chbp': 6.6,  # uV
             'lemon': 9.1,  # uV
-            'tuab': 9.7  # uV
+            'tuab': 9.7,  # uV
+            'tueg': 9.7  # uV (same TUH hardware as TUAB)
         }
         scaling_factor = scaling_factor / dataset_stds[dataset]
 
@@ -295,6 +311,8 @@ def run_benchmark_cv(benchmark, dataset):
                     'used to load the data, as cross-validation with n_jobs '
                     'would require one GPU per split.')
 
+        from deep_learning_utils import (
+            BraindecodeKFold, make_braindecode_scorer)
         cv = BraindecodeKFold(**cv_params)
         scoring = {m.__name__: make_braindecode_scorer(m) for m in metrics}
         cv_out_params = {'yield_win_inds': False}

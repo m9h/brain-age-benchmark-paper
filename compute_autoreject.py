@@ -8,7 +8,7 @@ import autoreject
 
 from utils import prepare_dataset
 
-DATASETS = ['chbp', 'lemon', 'tuab', 'camcan']
+DATASETS = ['chbp', 'lemon', 'tuab', 'tueg', 'tueg-smoke', 'camcan', 'hbn']
 parser = argparse.ArgumentParser(description='Compute autoreject.')
 parser.add_argument(
     '-d', '--dataset',
@@ -61,25 +61,36 @@ def run_subject(subject, cfg):
 
     # XXX Seems to be necessary for TUAB - figure out why
     if 'eeg' in epochs:
-        montage = mne.channels.make_standard_montage('standard_1005')
+        montage = (cfg.eeg_template_montage if cfg.eeg_template_montage
+                   is not None
+                   else mne.channels.make_standard_montage('standard_1005'))
         epochs.set_montage(montage)
 
     if analyze_channels:
         epochs.pick_channels(analyze_channels)
 
-    ar = autoreject.AutoReject(n_jobs=1, cv=5)
-    epochs = ar.fit_transform(epochs)
-    # important do do this after autorject but befor source localization
-    # particularly important as TUAB needs to be re-referenced
-    # but on the other hand we want benchmarks to be comparable, hence,
-    # re-reference all
-    if 'eeg' in epochs:
-        epochs.set_eeg_reference('average', projection=True).apply_proj()
-    bp_out = bp.copy().update(
-        processing="autoreject",
-        extension='.fif'
-    )
-    epochs.save(bp_out, overwrite=True)
+    # AutoReject's internal CV needs cv <= n_epochs. The canonical cohorts have
+    # long recordings (>>5 epochs), but the all-comers TUEG cohort includes
+    # short rests; cap cv per-subject and skip recordings too short to CV.
+    n_epochs = len(epochs)
+    if n_epochs < 2:
+        return 'too few epochs'
+    try:
+        ar = autoreject.AutoReject(n_jobs=1, cv=min(5, n_epochs))
+        epochs = ar.fit_transform(epochs)
+        # important do do this after autorject but befor source localization
+        # particularly important as TUAB needs to be re-referenced
+        # but on the other hand we want benchmarks to be comparable, hence,
+        # re-reference all
+        if 'eeg' in epochs:
+            epochs.set_eeg_reference('average', projection=True).apply_proj()
+        bp_out = bp.copy().update(
+            processing="autoreject",
+            extension='.fif'
+        )
+        epochs.save(bp_out, overwrite=True)
+    except Exception as exc:  # noqa: BLE001 - one bad subject must not abort 9k
+        return f'error: {exc}'
     return ok
 
 for dataset in datasets:

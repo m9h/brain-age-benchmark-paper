@@ -13,9 +13,10 @@ from mne.minimum_norm import apply_inverse_cov
 import h5io
 
 from utils import prepare_dataset
+import neoba
 
-DATASETS = ['chbp', 'lemon', 'tuab', 'camcan']
-FEATURE_TYPE = ['fb_covs', 'handcrafted', 'source_power']
+DATASETS = ['chbp', 'lemon', 'tuab', 'tueg', 'tueg-smoke', 'camcan', 'hbn']
+FEATURE_TYPE = ['fb_covs', 'handcrafted', 'source_power', 'fooof']
 parser = argparse.ArgumentParser(description='Compute features.')
 parser.add_argument(
     '-d', '--dataset',
@@ -103,6 +104,17 @@ def extract_handcrafted_feats(epochs, condition):
     return out
 
 
+def extract_fooof_feats(epochs, condition):
+    data = epochs[condition].get_data()
+    feats, groups, _names = neoba.extract_fooof_features(
+        data, epochs.info['sfreq'])
+    # Store only the arrays. The per-feature names are identical across subjects
+    # and deterministic from the extractor; persisting 1037 strings per subject
+    # serialises as ~10^5 tiny HDF5 nodes and wedges the NFS deriv_root in
+    # D-state. Regenerate names from neoba.extract_fooof_features if needed.
+    return {'feats': feats, 'groups': groups}
+
+
 def extract_source_power(bp, info, subject, subjects_dir, covs):
     fname_inv = bp.copy().update(suffix='inv',
                                  processing=None,
@@ -164,6 +176,8 @@ def run_subject(subject, cfg, condition):
             out = extract_fb_covs(epochs, condition)
         elif feature_type == 'handcrafted':
             out = extract_handcrafted_feats(epochs, condition)
+        elif feature_type == 'fooof':
+            out = extract_fooof_feats(epochs, condition)
         elif feature_type == 'source_power':
             covs = extract_fb_covs(epochs, condition)
             covs = covs['covs']
@@ -203,7 +217,7 @@ for dataset, feature_type in tasks:
             label = 'pooled'
             if '/' in condition:
                 label = f'eyes-{condition.split("/")[1]}'
-        elif dataset in ("tuab", 'camcan'):
+        elif dataset in ("tuab", 'tueg', 'camcan', 'hbn'):
             label = 'rest'
 
         out_fname = cfg.deriv_root / f'features_{feature_type}_{label}.h5'
