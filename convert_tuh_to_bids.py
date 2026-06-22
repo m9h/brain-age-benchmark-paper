@@ -25,10 +25,23 @@ from mne_bids import write_raw_bids, print_dir_tree, make_report, BIDSPath
 SEX_TO_MNE = {'n/a': 0, 'm': 1, 'f': 2}
 
 
+# Old 10-20 / TCP names -> closest standard_1005 equivalents (ported from Meta
+# neuralfetch's tuh_eeg study). A1/A2 are in the standard_1005 *montage* but not
+# its 2D *layout*, so set_montage() later crashes on them -- the parked A1/A2
+# error; T3-T6 are absent from 1005 (which uses T7/T8/P7/P8) so the channel
+# intersect silently drops them. Remapping fixes the crash AND recovers the
+# temporal channels. To be revisited once we move to 3D montage positions.
+TUH_10_5_RENAME = {
+    'T1': 'FT9', 'T2': 'FT10', 'T3': 'T7', 'T4': 'T8', 'T5': 'P7', 'T6': 'P8',
+    'C3P': 'CP3', 'C4P': 'CP4', 'A1': 'T9', 'A2': 'T10',
+}
+
+
 def rename_tuh_channels(ch_name):
     """Rename TUH channels and ignore non-EEG and custom channels.
 
     Rules:
+    - Old 10-20/TCP names remapped to standard_1005 (see TUH_10_5_RENAME).
     - 'Z' should always be lowercase.
     - 'P' following a 'F' should be lowercase.
     """
@@ -41,6 +54,7 @@ def rename_tuh_channels(ch_name):
     match = re.findall(r'^([A-Z]\w+)-REF$', ch_name)
     if len(match) == 1:
         out = match[0]
+        out = TUH_10_5_RENAME.get(out, out)              # 10-5 layout remap
         out = out.replace('FP', 'Fp').replace('Z', 'z')  # Apply rules
     else:
         out = ch_name
