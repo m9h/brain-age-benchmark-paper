@@ -3,12 +3,11 @@ import mne
 
 study_name = "age-prediction-benchmark"
 
-# On drago
-N_JOBS = 80
-bids_root = Path("/storage/store3/data/LEMON_EEG_BIDS")
-# deriv_root = Path("/storage/store3/derivatives/LEMON_EEG_BIDS/")
-deriv_root = Path("/storage/store3/derivatives/LEMON_EEG_BIDS_2/")
-subjects_dir = Path('/storage/store/data/camcan-mne/freesurfer')
+# DGX Spark paths
+n_jobs = 8
+bids_root = Path("/data/datasets/lemon/LEMON_EEG_BIDS")
+deriv_root = Path("/data/derivatives/brain_age/LEMON_EEG")
+subjects_dir = Path("/data/derivatives/brain_age/freesurfer")
 
 source_info_path_update = {'processing': 'autoreject',
                            'suffix': 'epo'}
@@ -35,7 +34,7 @@ eeg_template_montage = mne.channels.make_standard_montage("standard_1005")
 
 l_freq = 0.1
 h_freq = 49
-resample_sfreq = 200
+raw_resample_sfreq = 200
 # decim = 5 # LEMON has 1000 Hz; Cuban Human Brain Project 200Hz
 
 eeg_reference = []
@@ -44,18 +43,18 @@ eog_channels = ["Fp1"]
 
 find_breaks = False
 
-n_proj_eog = 1
+n_proj_eog = dict(n_eeg=1)
 
 reject = None
 
 on_rename_missing_events = "warn"
 
 epochs_tmin = 0
-epochs_tmax = 10 - 1 / resample_sfreq
+epochs_tmax = 10 - 1 / raw_resample_sfreq
 baseline = None
 
 run_source_estimation = True
-use_template_mri = True
+use_template_mri = "fsaverage"
 
 conditions = ["eyes/open", "eyes/closed"]
 
@@ -71,3 +70,4 @@ log_level = "info"
 
 mne_log_level = "error"
 on_error = "continue"
+# shortest_event removed in mne-bids-pipeline 1.x (was =1 in the paper config)

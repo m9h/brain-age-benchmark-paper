@@ -1,13 +1,10 @@
 import argparse
 import os
 import pathlib
-from tkinter import BOTTOM
-import urllib.request
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 import mne
-from mne.io.brainvision.brainvision import _aux_vhdr_info
 
 from mne_bids import write_raw_bids, print_dir_tree, make_report, BIDSPath
 
@@ -18,7 +15,7 @@ eeg_subjects = pd.read_csv('./lemon_eeg_subjects.csv')
 lemon_info = lemon_info.loc[eeg_subjects.subject]
 lemon_info['gender'] = lemon_info['Gender_ 1=female_2=male'].map({1: 2, 2: 1})
 lemon_info['age_guess'] = np.array(
-  lemon_info['Age'].str.split('-').tolist(), dtype=np.int).mean(1)
+  lemon_info['Age'].str.split('-').tolist(), dtype=int).mean(1)
 subjects = list(lemon_info.index)
 
 def convert_lemon_to_bids(lemon_data_dir, bids_save_dir, n_jobs=1, DEBUG=False):
@@ -40,21 +37,28 @@ def convert_lemon_to_bids(lemon_data_dir, bids_save_dir, n_jobs=1, DEBUG=False):
 
     good_subjects = Parallel(n_jobs=n_jobs)(
         delayed(_convert_subject)(subject, lemon_data_dir, bids_save_dir)
-        for subject in subjects_) 
+        for subject in subjects_)
+    bids_save_dir = pathlib.Path(bids_save_dir)
     subjects_ = [sub for sub in good_subjects if not isinstance(sub, tuple)]
-    _, bad_subjects, errs = zip(*[
-        sub for sub in good_subjects if isinstance(sub, tuple)])
-    bad_subjects = pd.DataFrame(
-        dict(subjects= bad_subjects, error=errs))
-    bad_subjects.to_csv(
-        '/storage/store3/data/LEMON_EEG_BIDS/bids_conv_erros.csv')
+    failed = [sub for sub in good_subjects if isinstance(sub, tuple)]
+    if failed:
+        _, bad_subjects, errs = zip(*failed)
+        pd.DataFrame(dict(subjects=bad_subjects, error=errs)).to_csv(
+            bids_save_dir / 'bids_conv_errors.csv')
+        print(f"[lemon-bids] {len(failed)} subjects failed conversion")
     # update the participants file as LEMON has no official age data
+    # (participant_id in the tsv carries the bare id, no 'sub-' prefix)
     participants = pd.read_csv(
-        "/storage/store3/data/LEMON_EEG_BIDS/participants.tsv", sep='\t')
+        bids_save_dir / "participants.tsv", sep='\t')
     participants = participants.set_index("participant_id")
-    participants.loc[subjects_, 'age'] = lemon_info.loc[subjects_, 'age_guess']
+    bare_ids = [s.replace("sub-", "") for s in subjects_]
+    age_by_bare = {s.replace("sub-", ""): lemon_info.loc[s, 'age_guess']
+                   for s in subjects_}
+    for bid in bare_ids:
+        if bid in participants.index:
+            participants.loc[bid, 'age'] = age_by_bare[bid]
     participants.to_csv(
-        "/storage/store3/data/LEMON_EEG_BIDS/participants.tsv", sep='\t')
+        bids_save_dir / "participants.tsv", sep='\t')
 
 
 def _convert_subject(subject, data_path, bids_save_dir):
@@ -66,18 +70,30 @@ def _convert_subject(subject, data_path, bids_save_dir):
         raw.set_channel_types({"VEOG": "eog"})
         montage = mne.channels.make_standard_montage('standard_1005')
         raw.set_montage(montage)
-        sub_id = subject.strip("sub-")
-        raw.info['subject_info'] = {
-            'participant_id': sub_id,
-            'sex': lemon_info.loc[subject, 'gender'],
-            'age': lemon_info.loc[subject, 'age_guess'],
-            # XXX LEMON shares no public age 
-            'hand': lemon_info.loc[subject, 'Handedness']
+        sub_id = subject.replace("sub-", "")
+        # Newer MNE SubjectInfo only accepts a fixed key set (no participant_id
+        # / age). sex is int 0/1/2; hand is int 1=right/2=left/3=ambi. Age has
+        # no exact value in LEMON (only bins) so it is written to
+        # participants.tsv from age_guess after conversion, not here.
+        hand_map = {'right': 1, 'left': 2, 'ambidextrous': 3, 'both': 3}
+        hand = hand_map.get(str(lemon_info.loc[subject, 'Handedness']).lower())
+        subject_info = {
+            'his_id': sub_id,
+            'sex': int(lemon_info.loc[subject, 'gender']),
         }
-        events, _ = mne.events_from_annotations(raw)
-
-        events = events[(events[:, 2] == 200) | (events[:, 2] == 210)]
+        if hand is not None:
+            subject_info['hand'] = hand
+        raw.info['subject_info'] = subject_info
+        # LEMON markers are BrainVision "Stimulus/S200" (eyes open) /
+        # "Stimulus/S210" (eyes closed). events_from_annotations assigns its own
+        # codes unless we pass an explicit mapping; everything else (S 1,
+        # actiCAP comments) is dropped. Strip annotations afterwards so the
+        # stricter write_raw_bids uses our events array rather than demanding
+        # event_id cover every annotation description.
+        custom_mapping = {"Stimulus/S200": 200, "Stimulus/S210": 210}
+        events, _ = mne.events_from_annotations(raw, event_id=custom_mapping)
         event_id = {"eyes/open": 200, "eyes/closed": 210}
+        raw.set_annotations(None)
         bids_path = BIDSPath(
             subject=sub_id, session=None, task='RSEEG',
             run=None,
@@ -86,9 +102,10 @@ def _convert_subject(subject, data_path, bids_save_dir):
         write_raw_bids(
             raw,
             bids_path,
-            events_data=events,
+            events=events,
             event_id=event_id,
-            overwrite=True
+            overwrite=True,
+            allow_preload=False,
         )
     except Exception as err:
         print(err)
@@ -100,11 +117,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Convert LEMON to BIDS.')
     parser.add_argument(
         '--lemon_data_dir', type=str,
-        default='/storage/store3/data/LEMON_RAW',
+        default='/data/datasets/lemon/LEMON_RAW',
         help='Path to the original data.')
     parser.add_argument(
         '--bids_data_dir', type=str,
-        default=pathlib.Path("/storage/store3/data/LEMON_EEG_BIDS"),
+        default='/data/datasets/lemon/LEMON_EEG_BIDS',
         help='Path to where the converted data should be saved.')
     parser.add_argument(
         '--n_jobs', type=int, default=1,
