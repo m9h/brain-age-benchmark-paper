@@ -131,3 +131,11 @@ dmypy.json
 .pyre/
 
 .DS_Store
+
+# slurm logs + claude session
+logs/
+*.out
+.claude/
+
+# participant metadata (download from LEMON; not committed to shared repo)
+META_File_IDs_*_LEMON.csv
