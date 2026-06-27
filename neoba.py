@@ -1,5 +1,17 @@
 """NEOBA-style oscillatory brain-age baseline (Hu, Valdés-Sosa et al. 2025).
 
+PROVENANCE — this is the FROZEN v1 baseline that produced the brain-age results
+currently committed in this repo. The canonical, evolving implementation is the
+standalone ``neoba`` package (github.com/m9h/neoba), which has since diverged:
+it splits OSF (oscillatory features) from ODC (oscillatory dynamic connectivity),
+uses the paper's Σ|PCC| sparse-group-lasso group weights + λ₁/λ₂ mapping, and
+adds opt-in bias correction and cross-spectral features — i.e. ``extract_features``
+there computes a DIFFERENT feature set than ``extract_fooof_features`` here. Do
+not "de-duplicate" by blindly importing the package: migrating changes the
+features and therefore the reported MAE, so it needs a deliberate re-run. Keep
+this file as the frozen baseline; treat m9h/neoba as the source of truth for new
+work.
+
 A stronger, interpretable *classical* baseline than coffeine's filterbank-Riemann,
 on the same 10-fold CV — the bar a frozen EEG-FM (REVE) has to clear. Following
 "Lifespan brain age prediction based on multiple EEG oscillatory features and

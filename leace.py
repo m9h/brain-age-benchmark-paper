@@ -29,6 +29,12 @@ running the site-free column on one cohort is a no-op, as it should be.
 
 Pure NumPy (no torch / concept-erasure dependency) so it stays inside the
 CPU-only brain-age venv and composes with the existing coffeine / NEOBA models.
+
+This is an independent clean-room implementation of the Belrose closed form. The
+emeg-fm identity-trap audit erases a *subject* axis with its own LEACE (vendored
+in ``fmscope/diagnostics/erasure.py``); the two are kept separate on purpose —
+LEACE is a small stable primitive, and coupling this benchmark to emeg-fm's
+vendored paper code would be the wrong dependency direction.
 """
 
 from __future__ import annotations
